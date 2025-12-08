@@ -6,64 +6,85 @@ import TelegramBot from "node-telegram-bot-api";
 import cron from "node-cron";
 import OpenAI from "openai";
 
+// -------------------------
+// ENVIRONMENT VARIABLES
+// -------------------------
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const ASSISTANT_ID = process.env.ASSISTANT_ID;
-
-const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
-
+const BOT_SECRET = process.env.BOT_SECRET; // random string
 const PORT = process.env.PORT || 3000;
-const WEBHOOK_URL = `https://fff-tutor-todd-bot.onrender.com/webhook`;
+
+if (!TELEGRAM_TOKEN || !OPENAI_API_KEY || !ASSISTANT_ID || !BOT_SECRET) {
+  console.error("❌ Missing required environment variables.");
+  process.exit(1);
+}
+
+// -------------------------
+// INIT SERVICES
+// -------------------------
+const bot = new TelegramBot(TELEGRAM_TOKEN); // ❗ NO POLLING
+const client = new OpenAI({ apiKey: OPENAI_API_KEY });
+
+// thread cache
+const userThreads = new Map();
 
 const app = express();
 app.use(express.json());
 
-// Store thread IDs per user
-const userThreads = new Map();
-
-// --- Get or Create Thread ---
+// -------------------------
+// GET OR CREATE THREAD
+// -------------------------
 async function getThread(userId) {
   if (userThreads.has(userId)) return userThreads.get(userId);
 
-  const thread = await openai.beta.threads.create();
+  const thread = await client.beta.threads.create();
   userThreads.set(userId, thread.id);
+
   return thread.id;
 }
 
-// --- Send Message to Assistant ---
-async function sendToAssistant(threadId, text) {
-  await openai.beta.threads.messages.create(threadId, {
+// -------------------------
+// SEND MESSAGE TO ASSISTANT
+// -------------------------
+async function sendToAssistant(userId, text) {
+  const threadId = await getThread(userId);
+
+  // Add message to thread
+  await client.beta.threads.messages.create(threadId, {
     role: "user",
     content: text,
   });
 
-  await openai.beta.threads.runs.createAndPoll(threadId, {
+  // Run assistant
+  const run = await client.beta.threads.runs.createAndPoll(threadId, {
     assistant_id: ASSISTANT_ID,
   });
 
-  const messages = await openai.beta.threads.messages.list(threadId);
-  return messages.data[0]?.content[0]?.text?.value || "⚠️ No response.";
+  if (run.status !== "completed") {
+    console.error("❌ Assistant run failed:", run.status);
+    return "⚠️ I'm having trouble thinking right now.";
+  }
+
+  // Get assistant message
+  const messages = await client.beta.threads.messages.list(threadId);
+  const aiMsg = messages.data[0];
+
+  try {
+    return aiMsg.content[0].text.value;
+  } catch {
+    return "⚠️ Sorry, I couldn't form a proper response.";
+  }
 }
 
-// --- Telegram Bot in Webhook Mode ---
-const SECRET_PATH = `/bot${TELEGRAM_TOKEN}`;
+// -------------------------
+// TELEGRAM WEBHOOK ENDPOINT
+// -------------------------
+const WEBHOOK_URL = `https://fff-tutor-todd-bot.onrender.com/webhook/${BOT_SECRET}`;
 
-const bot = new TelegramBot(TELEGRAM_TOKEN, {
-  webHook: {
-    port: PORT,
-  }
-});
-
-bot.setWebHook(`https://fff-tutor-todd-bot.onrender.com${SECRET_PATH}`);
-
-// Set webhook on startup
-bot.setWebHook(WEBHOOK_URL);
-
-// Webhook endpoint for Telegram
-app.post(SECRET_PATH, async (req, res) => {
+app.post(`/webhook/${BOT_SECRET}`, async (req, res) => {
   const message = req.body?.message;
 
-  // Ignore empty or unsupported updates
   if (!message?.text) return res.sendStatus(200);
 
   const chatId = message.chat.id;
@@ -71,41 +92,67 @@ app.post(SECRET_PATH, async (req, res) => {
   const text = message.text;
 
   try {
-    // Get or create a thread based on USER ID (correct)
-    const threadId = await getThread(userId);
-
-    // Send text to OpenAI (corrected argument order)
     const reply = await sendToAssistant(userId, text);
 
-    // Reply to user (safe error handling)
-    await bot.sendMessage(chatId, reply)
-      .catch(err => console.error("Telegram send error:", err.message));
-
+    await bot.sendMessage(chatId, reply).catch(err =>
+      console.error("Telegram send error:", err.message)
+    );
   } catch (err) {
     console.error("Assistant Error:", err);
-    await bot.sendMessage(chatId, "⚠️ Error processing your request.")
-      .catch(() => {});
+    await bot.sendMessage(chatId, "⚠️ Something went wrong.").catch(() => {});
   }
 
   return res.sendStatus(200);
 });
 
-// --- DAILY 4PM BROADCAST ---
-const GROUPS = [-1002729874032, -1002301644825, -1005002769407];
+// -------------------------
+// REGISTER TELEGRAM WEBHOOK
+// -------------------------
+async function initWebhook() {
+  const set = await bot.setWebHook(WEBHOOK_URL);
+
+  if (set) {
+    console.log("✅ Webhook set successfully:", WEBHOOK_URL);
+  } else {
+    console.log("❌ Failed to set webhook.");
+  }
+}
+
+initWebhook();
+
+// -------------------------
+// DAILY 4PM PST CRON
+// -------------------------
+const GROUPS = [
+  -1002729874032,
+  -1002301644825,
+  -1005002769407
+];
 
 cron.schedule("0 16 * * *", async () => {
-  console.log("⏰ 4PM PST Broadcast...");
+  console.log("⏰ Sending 4PM PST Tutor Todd daily broadcast...");
 
   for (const groupId of GROUPS) {
     try {
-      const threadId = await getThread(groupId);
-      const lesson = await sendToAssistant(threadId, "Send today's FFF daily lesson.");
+      const lesson = await sendToAssistant(groupId, "Send today's FFF daily lesson.");
       await bot.sendMessage(groupId, lesson, { parse_mode: "Markdown" });
-      console.log(`📨 Sent to group ${groupId}`);
-    } catch (error) {
-      console.error(`❌ Failed to send to ${groupId}`, error);
+      console.log(`📨 Lesson sent to group ${groupId}`);
+    } catch (err) {
+      console.error(`❌ Error sending to group ${groupId}:`, err);
     }
   }
-}, { timezone: "America/Los_Angeles" });
+}, {
+  timezone: "America/Los_Angeles"
+});
 
-console.log("Tutor Todd Bot is running via Webhook...");
+// -------------------------
+// EXPRESS SERVER (RENDER)
+// -------------------------
+app.get("/", (req, res) => {
+  res.send("FFF Tutor Todd Telegram Bot is running via Webhook.");
+});
+
+app.listen(PORT, () => {
+  console.log(`Tutor Todd Bot running on port ${PORT}`);
+  console.log("Webhook URL:", WEBHOOK_URL);
+});
