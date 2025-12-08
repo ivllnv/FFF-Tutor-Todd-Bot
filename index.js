@@ -46,15 +46,21 @@ async function sendToAssistant(threadId, text) {
 }
 
 // --- Telegram Bot in Webhook Mode ---
+const SECRET_PATH = `/bot${TELEGRAM_TOKEN}`;
+
 const bot = new TelegramBot(TELEGRAM_TOKEN, {
-  webHook: { port: PORT }
+  webHook: {
+    port: PORT,
+  }
 });
+
+bot.setWebHook(`https://fff-tutor-todd-bot.onrender.com${SECRET_PATH}`);
 
 // Set webhook on startup
 bot.setWebHook(WEBHOOK_URL);
 
 // Webhook endpoint for Telegram
-app.post("/webhook", async (req, res) => {
+app.post(SECRET_PATH, async (req, res) => {
   const message = req.body?.message;
 
   if (!message?.text) return res.sendStatus(200);
