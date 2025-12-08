@@ -63,6 +63,7 @@ bot.setWebHook(WEBHOOK_URL);
 app.post(SECRET_PATH, async (req, res) => {
   const message = req.body?.message;
 
+  // Ignore empty or unsupported updates
   if (!message?.text) return res.sendStatus(200);
 
   const chatId = message.chat.id;
@@ -70,15 +71,23 @@ app.post(SECRET_PATH, async (req, res) => {
   const text = message.text;
 
   try {
+    // Get or create a thread based on USER ID (correct)
     const threadId = await getThread(userId);
-    const reply = await sendToAssistant(threadId, text);
-    await bot.sendMessage(chatId, reply);
+
+    // Send text to OpenAI (corrected argument order)
+    const reply = await sendToAssistant(userId, text);
+
+    // Reply to user (safe error handling)
+    await bot.sendMessage(chatId, reply)
+      .catch(err => console.error("Telegram send error:", err.message));
+
   } catch (err) {
     console.error("Assistant Error:", err);
-    await bot.sendMessage(chatId, "⚠️ Error processing your request.");
+    await bot.sendMessage(chatId, "⚠️ Error processing your request.")
+      .catch(() => {});
   }
 
-  res.sendStatus(200);
+  return res.sendStatus(200);
 });
 
 // --- DAILY 4PM BROADCAST ---
