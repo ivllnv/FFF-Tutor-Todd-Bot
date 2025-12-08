@@ -66,17 +66,51 @@ bot.on("message", async (msg) => {
   const userId = msg.from.id;
   const text = msg.text;
 
-  if (!text) return;
-
   try {
-    const reply = await sendToAssistant(userId, text);
-    bot.sendMessage(chatId, reply, { parse_mode: "Markdown" });
-  } catch (err) {
-    console.error("Assistant Error:", err);
+    // Create or reuse thread for user
+    let threadId = userThreads.get(userId);
+    if (!threadId) {
+      const thread = await openai.beta.threads.create();
+      threadId = thread.id;
+      userThreads.set(userId, threadId);
+    }
+
+    // Add user message to thread
+    await openai.beta.threads.messages.create(threadId, {
+      role: "user",
+      content: text,
+    });
+
+    // Start a run
+    let run = await openai.beta.threads.runs.create(threadId, {
+      assistant_id: ASSISTANT_ID,
+    });
+
+    // WAIT for run to complete
+    let runStatus = run.status;
+    while (runStatus === "queued" || runStatus === "in_progress") {
+      await new Promise((r) => setTimeout(r, 1000));
+      const updatedRun = await openai.beta.threads.runs.retrieve(threadId, run.id);
+      runStatus = updatedRun.status;
+    }
+
+    // If run failed
+    if (runStatus !== "completed") {
+      throw new Error("Run failed with status: " + runStatus);
+    }
+
+    // Fetch the assistant reply
+    const messages = await openai.beta.threads.messages.list(threadId);
+    const lastMessage = messages.data[0];
+
+    const reply = lastMessage?.content[0]?.text?.value || "⚠️ No response from assistant.";
+
+    bot.sendMessage(chatId, reply);
+  } catch (error) {
+    console.error("Assistant Error:", error);
     bot.sendMessage(chatId, "⚠️ Sorry, something went wrong processing your request.");
   }
 });
-
 
 // --- DAILY 4 PM PST BROADCAST ---
 const GROUPS = [
