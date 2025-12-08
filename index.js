@@ -173,3 +173,17 @@ app.listen(PORT, () => {
   console.log(`Tutor Todd Bot running on port ${PORT}`);
   console.log(`Webhook URL: ${WEBHOOK_URL}`);
 });
+
+// ---------------------------------------------------
+// 🔄 SELF-PING (Keeps Render Awake)
+// ---------------------------------------------------
+import axios from "axios";
+
+setInterval(async () => {
+  try {
+    await axios.get("https://fff-tutor-todd-bot.onrender.com/");
+    console.log("🔄 Self-ping OK");
+  } catch (err) {
+    console.error("⚠️ Self-ping failed:", err.message);
+  }
+}, 180000); // Ping every 3 minutes
