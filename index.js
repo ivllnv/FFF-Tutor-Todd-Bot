@@ -6,25 +6,28 @@ import TelegramBot from "node-telegram-bot-api";
 import cron from "node-cron";
 import OpenAI from "openai";
 
-// --- Initialize ---
-const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
-const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-const PORT = process.env.PORT || 3000;
+// --- Initialize environment + services ---
+const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const ASSISTANT_ID = process.env.ASSISTANT_ID;
 
-// Memory: thread per Telegram user
+const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
+const client = new OpenAI({ apiKey: OPENAI_API_KEY });
+
+const PORT = process.env.PORT || 3000;
+
+// Thread cache for storing conversations per user
 const threads = new Map();
 
-// --- Express server (needed for Render keep-alive) ---
+// --- Express server for Render keep-alive ---
 const app = express();
 app.get("/", (req, res) => {
-  res.send("FFF Tutor Todd Telegram Bot is running (Render).");
+  res.send("FFF Tutor Todd Telegram Bot is running on Render.");
 });
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 
 
-// --- Function: Get or create a thread for the user ---
+// --- Get or create thread for user ---
 async function getThread(userId) {
   if (threads.has(userId)) return threads.get(userId);
 
@@ -34,7 +37,7 @@ async function getThread(userId) {
 }
 
 
-// --- Function: Send message to OpenAI Assistant ---
+// --- Send message to Assistant ---
 async function sendToAssistant(userId, text) {
   const threadId = await getThread(userId);
 
@@ -44,12 +47,12 @@ async function sendToAssistant(userId, text) {
     content: text
   });
 
-  // Run assistant
+  // Run assistant and wait for response
   const run = await client.beta.threads.runs.createAndPoll(threadId, {
     assistant_id: ASSISTANT_ID
   });
 
-  // Extract response
+  // Extract the latest message from thread
   const messages = await client.beta.threads.messages.list(threadId);
   const aiMsg = messages.data[0];
 
@@ -57,47 +60,45 @@ async function sendToAssistant(userId, text) {
 }
 
 
-// --- Telegram Listener ---
+// --- Telegram message handler ---
 bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
   const text = msg.text;
 
-  // ignore service messages
   if (!text) return;
 
   try {
     const reply = await sendToAssistant(userId, text);
     bot.sendMessage(chatId, reply, { parse_mode: "Markdown" });
-
   } catch (err) {
     console.error("Assistant Error:", err);
-    bot.sendMessage(chatId, "⚠️ Sorry, something went wrong processing your message.");
+    bot.sendMessage(chatId, "⚠️ Sorry, something went wrong processing your request.");
   }
 });
 
 
-// --- Daily Schedule (4 PM PST every day) ---
-cron.schedule("0 0 * * *", async () => {
-  console.log("⏰ Sending 4PM PST Tutor Todd message...");
+// --- DAILY 4 PM PST BROADCAST ---
+const GROUPS = [
+  -1002729874032,
+  -1002301644825,
+  -1005002769407
+];
 
-  const GROUPS = [
-    -1002729874032,
-    -1002301644825,
-    -1005002769407
-  ];
+cron.schedule("0 0 * * *", async () => {
+  console.log("⏰ Sending 4PM PST Tutor Todd broadcast...");
 
   for (const groupId of GROUPS) {
     try {
       const lesson = await sendToAssistant(groupId, "Send today's FFF daily lesson.");
-      bot.sendMessage(groupId, lesson, { parse_mode: "Markdown" });
-
+      await bot.sendMessage(groupId, lesson, { parse_mode: "Markdown" });
+      console.log(`📨 Sent lesson to ${groupId}`);
     } catch (err) {
-      console.error("Daily message error:", err);
+      console.error(`❌ Failed to send message to group ${groupId}:`, err);
     }
   }
 }, {
   timezone: "America/Los_Angeles"
 });
 
-console.log("Tutor Todd Bot is running...");
+console.log("Tutor Todd Bot is fully running...");
