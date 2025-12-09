@@ -1,6 +1,4 @@
-// -------------------------
 // Environment Setup
-// -------------------------
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -23,9 +21,7 @@ if (!TELEGRAM_TOKEN || !OPENAI_API_KEY || !ASSISTANT_ID || !BOT_SECRET) {
   process.exit(1);
 }
 
-// -------------------------
 // Initialize Services
-// -------------------------
 const app = express();
 app.use(express.json());
 
@@ -34,14 +30,10 @@ const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
 console.log("🔧 Using Webhook Mode — polling disabled.");
 
-// -------------------------
 // Thread Storage (per chatId)
-// -------------------------
 const threads = new Map();
 
-/**
- * Returns existing thread or creates a new one for the chat.
- */
+// Returns existing thread or creates a new one for the chat
 async function getThread(chatId) {
   if (threads.has(chatId)) return threads.get(chatId);
 
@@ -52,9 +44,7 @@ async function getThread(chatId) {
   return thread.id;
 }
 
-// -------------------------
 // Assistant Interaction
-// -------------------------
 async function sendToAssistant(chatId, text) {
   const threadId = await getThread(chatId);
 
@@ -77,9 +67,7 @@ async function sendToAssistant(chatId, text) {
   return replyMessage || "⚠️ No response from assistant.";
 }
 
-// -------------------------
 // Webhook URL Setup
-// -------------------------
 const WEBHOOK_URL = `https://fff-tutor-todd-bot.onrender.com/webhook/${BOT_SECRET}`;
 console.log("➡️ Webhook URL:", WEBHOOK_URL);
 
@@ -101,9 +89,7 @@ console.log("➡️ Webhook URL:", WEBHOOK_URL);
   }
 })();
 
-// -------------------------
 // Webhook Endpoint
-// -------------------------
 app.post(`/webhook/${BOT_SECRET}`, async (req, res) => {
   const update = req.body;
 
@@ -127,9 +113,7 @@ app.post(`/webhook/${BOT_SECRET}`, async (req, res) => {
   res.sendStatus(200);
 });
 
-// -------------------------
 // Safe Telegram Sender (Retry + Quarantine)
-// -------------------------
 const invalidGroups = new Set();
 
 async function safeSendMessage(chatId, message, options = {}) {
@@ -156,9 +140,7 @@ async function safeSendMessage(chatId, message, options = {}) {
   }
 }
 
-// -------------------------
 // Upgraded Daily Broadcast
-// -------------------------
 const GROUPS = [
   -1002729874032,
   -1002301644825,
@@ -166,9 +148,9 @@ const GROUPS = [
 ];
 
 cron.schedule(
-  "0 16 * * *", // 4 PM PST
+  "0 4 * * *", // 4 AM PST
   async () => {
-    console.log("⏰ Sending 4PM PST Daily Lesson...");
+    console.log("⏰ Sending 4AM PST Daily Lesson...");
 
     for (const groupId of GROUPS) {
       try {
@@ -198,9 +180,7 @@ cron.schedule(
   { timezone: "America/Los_Angeles" }
 );
 
-// -------------------------
 // Express Server (Render)
-// -------------------------
 app.get("/", (req, res) => {
   res.send("FFF Tutor Todd Telegram Bot is running (Webhook mode).");
 });
@@ -210,9 +190,7 @@ app.listen(PORT, () => {
   console.log(`Webhook URL: ${WEBHOOK_URL}`);
 });
 
-// -------------------------
 // Self-Ping (Keeps Render Awake)
-// -------------------------
 setInterval(async () => {
   try {
     await axios.get("https://fff-tutor-todd-bot.onrender.com/");
