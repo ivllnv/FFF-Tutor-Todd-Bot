@@ -8,6 +8,7 @@ import express from "express";
 import TelegramBot from "node-telegram-bot-api";
 import cron from "node-cron";
 import OpenAI from "openai";
+import axios from "axios";
 
 const {
   TELEGRAM_TOKEN,
@@ -26,10 +27,9 @@ if (!TELEGRAM_TOKEN || !OPENAI_API_KEY || !ASSISTANT_ID || !BOT_SECRET) {
 // Initialize Services
 // -------------------------
 const app = express();
-app.use(express.json()); // important for webhooks
+app.use(express.json());
 
-const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: false }); // Webhook mode ONLY
-
+const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: false });
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
 console.log("🔧 Using Webhook Mode — polling disabled.");
@@ -41,7 +41,6 @@ const threads = new Map();
 
 /**
  * Returns existing thread or creates a new one for the chat.
- * Each Telegram CHAT gets its own independent thread.
  */
 async function getThread(chatId) {
   if (threads.has(chatId)) return threads.get(chatId);
@@ -59,23 +58,19 @@ async function getThread(chatId) {
 async function sendToAssistant(chatId, text) {
   const threadId = await getThread(chatId);
 
-  // Add message to the thread
   await openai.beta.threads.messages.create(threadId, {
     role: "user",
     content: text,
   });
 
-  // Run assistant
   const run = await openai.beta.threads.runs.createAndPoll(threadId, {
     assistant_id: ASSISTANT_ID,
   });
 
-  // Handle failure
   if (run.status !== "completed") {
     throw new Error("Assistant run failed: " + run.status);
   }
 
-  // Get the latest assistant reply
   const messages = await openai.beta.threads.messages.list(threadId);
   const replyMessage = messages.data[0]?.content?.[0]?.text?.value;
 
@@ -83,13 +78,11 @@ async function sendToAssistant(chatId, text) {
 }
 
 // -------------------------
-// Telegram Webhook URL
+// Webhook URL Setup
 // -------------------------
 const WEBHOOK_URL = `https://fff-tutor-todd-bot.onrender.com/webhook/${BOT_SECRET}`;
-
 console.log("➡️ Webhook URL:", WEBHOOK_URL);
 
-// Set webhook on Telegram startup
 (async () => {
   try {
     const res = await fetch(
@@ -114,7 +107,6 @@ console.log("➡️ Webhook URL:", WEBHOOK_URL);
 app.post(`/webhook/${BOT_SECRET}`, async (req, res) => {
   const update = req.body;
 
-  // Ignore if no message or text
   if (!update.message || !update.message.text) {
     return res.sendStatus(200);
   }
@@ -136,7 +128,36 @@ app.post(`/webhook/${BOT_SECRET}`, async (req, res) => {
 });
 
 // -------------------------
-// Daily Automated Broadcast
+// Safe Telegram Sender (Retry + Quarantine)
+// -------------------------
+const invalidGroups = new Set();
+
+async function safeSendMessage(chatId, message, options = {}) {
+  try {
+    return await bot.sendMessage(chatId, message, options);
+  } catch (err) {
+    // Rate limit retry
+    if (err.code === "ETELEGRAM" && err.response?.statusCode === 429) {
+      const retryAfter = err.response?.body?.parameters?.retry_after || 1;
+      console.log(`⏳ Rate limit hit. Retrying in ${retryAfter}s...`);
+      await new Promise((resolve) => setTimeout(resolve, retryAfter * 1000));
+      return safeSendMessage(chatId, message, options);
+    }
+
+    // Chat not found (bot removed / group deleted / wrong ID)
+    if (err.code === "ETELEGRAM" && err.response?.statusCode === 400) {
+      console.error(`❌ Invalid or inaccessible group ${chatId}. Quarantining.`);
+      invalidGroups.add(chatId);
+      return null;
+    }
+
+    console.error(`❌ Failed to send message to ${chatId}:`, err.message);
+    return null;
+  }
+}
+
+// -------------------------
+// Upgraded Daily Broadcast
 // -------------------------
 const GROUPS = [
   -1002729874032,
@@ -147,17 +168,32 @@ const GROUPS = [
 cron.schedule(
   "0 16 * * *", // 4 PM PST
   async () => {
-    console.log("⏰ Sending 4PM PST daily Todd broadcast...");
+    console.log("⏰ Sending 4PM PST Daily Lesson...");
 
     for (const groupId of GROUPS) {
       try {
-        const lesson = await sendToAssistant(groupId, "Send today's FFF daily lesson.");
-        await bot.sendMessage(groupId, lesson, { parse_mode: "Markdown" });
-        console.log(`📨 Sent lesson to ${groupId}`);
+        if (invalidGroups.has(groupId)) {
+          console.log(`⚠️ Skipping quarantined group ${groupId}`);
+          continue;
+        }
+
+        const lesson = await sendToAssistant(
+          groupId,
+          "Send today's FFF daily lesson."
+        );
+
+        const result = await safeSendMessage(groupId, lesson, { parse_mode: "Markdown" });
+
+        if (result) {
+          console.log(`📨 Sent lesson to ${groupId}`);
+        }
+
       } catch (err) {
-        console.error(`❌ Failed to broadcast to ${groupId}:`, err);
+        console.error(`❌ Critical broadcast error for ${groupId}:`, err);
       }
     }
+
+    console.log("📊 Daily broadcast complete.");
   },
   { timezone: "America/Los_Angeles" }
 );
@@ -174,11 +210,9 @@ app.listen(PORT, () => {
   console.log(`Webhook URL: ${WEBHOOK_URL}`);
 });
 
-// ---------------------------------------------------
-// 🔄 SELF-PING (Keeps Render Awake)
-// ---------------------------------------------------
-import axios from "axios";
-
+// -------------------------
+// Self-Ping (Keeps Render Awake)
+// -------------------------
 setInterval(async () => {
   try {
     await axios.get("https://fff-tutor-todd-bot.onrender.com/");
@@ -186,4 +220,4 @@ setInterval(async () => {
   } catch (err) {
     console.error("⚠️ Self-ping failed:", err.message);
   }
-}, 180000); // Ping every 3 minutes
+}, 180000);
