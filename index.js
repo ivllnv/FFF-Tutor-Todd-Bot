@@ -10,8 +10,8 @@ import cron from "node-cron";
 import OpenAI from "openai";
 import axios from "axios";
 
-// 👉 NEW: Import your JSON prompts
-import prompts from "tutor_todd_daily_checkins.json" assert { type: "json" };
+const promptsPath = new URL("./tutor_todd_daily_checkins.json", import.meta.url);
+const prompts = JSON.parse(fs.readFileSync(promptsPath, "utf-8"));
 
 const {
   TELEGRAM_TOKEN,
