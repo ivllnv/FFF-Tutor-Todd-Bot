@@ -237,15 +237,15 @@ function buildStudentMessage(groupId) {
 // Upgraded Daily Broadcast
 // -------------------------
 const GROUPS = [
-//  -1002729874032, // Student
-//  -1002301644825, // Fatherbot
+  -1002729874032, // Student
+  -1002301644825, // Fatherbot
   -1003239995492, // Student
 ];
 
 cron.schedule(
-  "*/10 * * * *", // 🔁 Every 1 minute (TEST)
+  "0 4 * * *", // 4 AM PST
   async () => {
-    console.log("⏰ Sending TEST Daily Lesson to -1003239995492...");
+    console.log("⏰ Sending 4AM PST Daily Lesson...");
 
     for (const groupId of GROUPS) {
       try {
@@ -254,10 +254,11 @@ cron.schedule(
           continue;
         }
 
+        // 👉 DIFFERENT CONTENT PER GROUP
         // Fatherbot: -1002301644825
-        // Students (this test): -1003239995492
+        // Students:  -1002729874032, -1003239995492
         let lesson;
-        if (groupId === -1003239995492) {
+        if (groupId === -1002301644825) {
           lesson = buildFatherbotMessage(groupId);
         } else {
           lesson = buildStudentMessage(groupId);
@@ -276,7 +277,7 @@ cron.schedule(
       }
     }
 
-    console.log("📊 Test broadcast cycle complete.");
+    console.log("📊 Daily broadcast complete.");
   },
   { timezone: "America/Los_Angeles" }
 );
