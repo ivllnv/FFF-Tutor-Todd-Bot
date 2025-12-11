@@ -243,7 +243,7 @@ const GROUPS = [
 ];
 
 cron.schedule(
-  "*/1 * * * *", // 🔁 Every 1 minute (TEST)
+  "*/10 * * * *", // 🔁 Every 1 minute (TEST)
   async () => {
     console.log("⏰ Sending TEST Daily Lesson to -1003239995492...");
 
