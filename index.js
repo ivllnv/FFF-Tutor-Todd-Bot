@@ -9,6 +9,7 @@ import TelegramBot from "node-telegram-bot-api";
 import cron from "node-cron";
 import OpenAI from "openai";
 import axios from "axios";
+import fs from "node:fs";
 
 const promptsPath = new URL("./tutor_todd_daily_checkins.json", import.meta.url);
 const prompts = JSON.parse(fs.readFileSync(promptsPath, "utf-8"));
