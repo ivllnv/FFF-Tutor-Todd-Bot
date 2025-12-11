@@ -1,4 +1,6 @@
+// -------------------------
 // Environment Setup
+// -------------------------
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -8,6 +10,9 @@ import cron from "node-cron";
 import OpenAI from "openai";
 import axios from "axios";
 
+// 👉 NEW: Import your JSON prompts
+import prompts from "tutor_todd_daily_checkins.json" assert { type: "json" };
+
 const {
   TELEGRAM_TOKEN,
   OPENAI_API_KEY,
@@ -16,12 +21,14 @@ const {
   PORT = 3000,
 } = process.env;
 
-if (!TELEGRAM_TOKEN || !OPENAI_API_KEY || !ASSISTANT_ID || !BOT_SECRET) {
+if (! TELEGRAM_TOKEN || ! OPENAI_API_KEY || ! ASSISTANT_ID || ! BOT_SECRET) {
   console.error("❌ Missing required environment variables.");
   process.exit(1);
 }
 
+// -------------------------
 // Initialize Services
+// -------------------------
 const app = express();
 app.use(express.json());
 
@@ -30,10 +37,14 @@ const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
 console.log("🔧 Using Webhook Mode — polling disabled.");
 
+// -------------------------
 // Thread Storage (per chatId)
+// -------------------------
 const threads = new Map();
 
-// Returns existing thread or creates a new one for the chat
+/**
+ * Returns existing thread or creates a new one for the chat.
+ */
 async function getThread(chatId) {
   if (threads.has(chatId)) return threads.get(chatId);
 
@@ -44,7 +55,9 @@ async function getThread(chatId) {
   return thread.id;
 }
 
+// -------------------------
 // Assistant Interaction
+// -------------------------
 async function sendToAssistant(chatId, text) {
   const threadId = await getThread(chatId);
 
@@ -67,7 +80,9 @@ async function sendToAssistant(chatId, text) {
   return replyMessage || "⚠️ No response from assistant.";
 }
 
+// -------------------------
 // Webhook URL Setup
+// -------------------------
 const WEBHOOK_URL = `https://fff-tutor-todd-bot.onrender.com/webhook/${BOT_SECRET}`;
 console.log("➡️ Webhook URL:", WEBHOOK_URL);
 
@@ -89,7 +104,9 @@ console.log("➡️ Webhook URL:", WEBHOOK_URL);
   }
 })();
 
+// -------------------------
 // Webhook Endpoint
+// -------------------------
 app.post(`/webhook/${BOT_SECRET}`, async (req, res) => {
   const update = req.body;
 
@@ -113,7 +130,9 @@ app.post(`/webhook/${BOT_SECRET}`, async (req, res) => {
   res.sendStatus(200);
 });
 
+// -------------------------
 // Safe Telegram Sender (Retry + Quarantine)
+// -------------------------
 const invalidGroups = new Set();
 
 async function safeSendMessage(chatId, message, options = {}) {
@@ -140,17 +159,92 @@ async function safeSendMessage(chatId, message, options = {}) {
   }
 }
 
+// -------------------------
+// DAILY CONTENT HELPERS (Fatherbot / Student)
+// -------------------------
+
+function getDayOfYear() {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), 0, 0);
+  const diff = now - start;
+  const oneDay = 1000 * 60 * 60 * 24;
+  return Math.floor(diff / oneDay);
+}
+
+/**
+ * Deterministic daily picker:
+ * - Changes each day
+ * - Also offset by groupId so each group gets a different item
+ */
+function getDailyItem(arr, seed = 0, groupId = 0) {
+  if (!Array.isArray(arr) || arr.length === 0) return "";
+  const day = getDayOfYear();
+  const base = day + seed + Math.abs(Number(groupId) || 0);
+  const index = ((base % arr.length) + arr.length) % arr.length;
+  return arr[index];
+}
+
+function buildFatherbotMessage(groupId) {
+  const f = prompts.fatherbot;
+
+  const intro      = getDailyItem(f.intros, 3, groupId);
+  const title      = getDailyItem(f.motivational_titles, 7, groupId);
+  const quote      = getDailyItem(f.quotes, 11, groupId);
+  const reflection = getDailyItem(f.reflection_templates, 17, groupId);
+  const checkin    = getDailyItem(f.checkins, 23, groupId);
+  const closing    = getDailyItem(f.closing_messages, 29, groupId);
+
+  return [
+    intro,
+    "",
+    `${title}`,
+    `“${quote}”`,
+    "",
+    `*Reflection:* ${reflection}`,
+    "",
+    `*Check-in:* ${checkin}`,
+    "",
+    closing,
+  ].join("\n");
+}
+
+function buildStudentMessage(groupId) {
+  const s = prompts.student;
+
+  const intro      = getDailyItem(s.intros, 5, groupId);
+  const title      = getDailyItem(s.motivational_titles, 9, groupId);
+  const quote      = getDailyItem(s.quotes, 13, groupId);
+  const reflection = getDailyItem(s.reflection_templates, 19, groupId);
+  const checkin    = getDailyItem(s.checkins, 31, groupId);
+  const closing    = getDailyItem(s.closing_messages, 37, groupId);
+
+  return [
+    intro,
+    "",
+    `${title}`,
+    `“${quote}”`,
+    "",
+    `*Reflection:* ${reflection}`,
+    "",
+    `*Check-in:* ${checkin}`,
+    "",
+    closing,
+  ].join("\n");
+}
+
+// -------------------------
 // Upgraded Daily Broadcast
+// -------------------------
 const GROUPS = [
-  -1002729874032,
-  -1002301644825,
-  -1005002769407,
+//  -1002729874032, // Student
+//  -1002301644825, // Fatherbot
+  -1003239995492, // Student
 ];
 
 cron.schedule(
-  "0 4 * * *", // 4 AM PST
+  "*/1 * * * *", // 🔁 Every 1 minute (TEST)
   async () => {
-    console.log("⏰ Sending 4AM PST Daily Lesson...");
+    console.log("⏰ Sending TEST Daily Lesson to -1003239995492...");
 
     for (const groupId of GROUPS) {
       try {
@@ -159,12 +253,18 @@ cron.schedule(
           continue;
         }
 
-        const lesson = await sendToAssistant(
-          groupId,
-          "Send today's FFF daily lesson."
-        );
+        // Fatherbot: -1002301644825
+        // Students (this test): -1003239995492
+        let lesson;
+        if (groupId === -1003239995492) {
+          lesson = buildFatherbotMessage(groupId);
+        } else {
+          lesson = buildStudentMessage(groupId);
+        }
 
-        const result = await safeSendMessage(groupId, lesson, { parse_mode: "Markdown" });
+        const result = await safeSendMessage(groupId, lesson, {
+          parse_mode: "Markdown",
+        });
 
         if (result) {
           console.log(`📨 Sent lesson to ${groupId}`);
@@ -175,12 +275,14 @@ cron.schedule(
       }
     }
 
-    console.log("📊 Daily broadcast complete.");
+    console.log("📊 Test broadcast cycle complete.");
   },
   { timezone: "America/Los_Angeles" }
 );
 
+// -------------------------
 // Express Server (Render)
+// -------------------------
 app.get("/", (req, res) => {
   res.send("FFF Tutor Todd Telegram Bot is running (Webhook mode).");
 });
@@ -190,7 +292,9 @@ app.listen(PORT, () => {
   console.log(`Webhook URL: ${WEBHOOK_URL}`);
 });
 
+// -------------------------
 // Self-Ping (Keeps Render Awake)
+// -------------------------
 setInterval(async () => {
   try {
     await axios.get("https://fff-tutor-todd-bot.onrender.com/");
